@@ -1,8 +1,15 @@
+import time
+
 import folium
 import pandas as pd
 import requests
 import streamlit as st
 from streamlit_folium import st_folium
+
+
+# --------------------------------------------------
+# APP SETTINGS
+# --------------------------------------------------
 
 st.set_page_config(
     page_title="DUN N13 Paya Rumput",
@@ -18,6 +25,10 @@ BOUNDARY_URL = (
 MAP_CENTER = [2.287, 102.223]
 
 
+# --------------------------------------------------
+# LOAD DUN BOUNDARY
+# --------------------------------------------------
+
 @st.cache_data(ttl=86400)
 def load_paya_rumput_boundary():
     response = requests.get(BOUNDARY_URL, timeout=60)
@@ -27,15 +38,107 @@ def load_paya_rumput_boundary():
 
     for feature in geojson["features"]:
         dun_name = str(feature["properties"].get("dun", ""))
+        code_dun = str(feature["properties"].get("code_dun", ""))
 
-        if "Paya Rumput" in dun_name:
+        if "Paya Rumput" in dun_name or code_dun == "N.13":
             return feature
 
     return None
 
 
+# --------------------------------------------------
+# AUTO-FIND POLLING CENTRES
+# --------------------------------------------------
+
+@st.cache_data(ttl=86400)
+def load_polling_centres():
+    centres = [
+        {"name": "SK Paya Rumput", "district": "Hujong Padang"},
+        {"name": "SMK Paya Rumput", "district": "Hujong Padang"},
+        {"name": "SK Krubong", "district": "Krubong"},
+        {"name": "SMK Krubong", "district": "Krubong"},
+        {
+            "name": "Dewan Komuniti PPR Krubong",
+            "district": "Krubong"
+        },
+        {"name": "SK Cheng", "district": "Pantai Cheng"},
+        {
+            "name": "SK Tanjung Minyak",
+            "district": "Cheng Perdana"
+        },
+        {
+            "name": "SMK Tun Haji Abdul Malek",
+            "district": "Cheng"
+        },
+        {
+            "name": "SK Tanjung Minyak 2",
+            "district": "Tanjung Minyak"
+        },
+        {
+            "name": "SRA JAIM Tanjung Minyak 2",
+            "district": "Tanjung Minyak"
+        },
+    ]
+
+    results = []
+
+    for centre in centres:
+        try:
+            response = requests.get(
+                "https://nominatim.openstreetmap.org/search",
+                params={
+                    "q": centre["name"] + ", Melaka, Malaysia",
+                    "format": "jsonv2",
+                    "limit": 1,
+                },
+                headers={
+                    "User-Agent": "PayaRumputDashboard/1.0"
+                },
+                timeout=30,
+            )
+
+            data = response.json()
+
+            if data:
+                results.append(
+                    {
+                        "name": centre["name"],
+                        "district": centre["district"],
+                        "lat": float(data[0]["lat"]),
+                        "lon": float(data[0]["lon"]),
+                    }
+                )
+
+            # Respect free OpenStreetMap search service
+            time.sleep(1)
+
+        except Exception:
+            pass
+
+    return pd.DataFrame(results)
+
+
+# --------------------------------------------------
+# LOAD DATA
+# --------------------------------------------------
+
+boundary = load_paya_rumput_boundary()
+polling_centres = load_polling_centres()
+
+
+# --------------------------------------------------
+# PAGE HEADER
+# --------------------------------------------------
+
 st.title("DUN N13 Paya Rumput")
-st.caption("Peta maklumat awam dan ringkasan kawasan.")
+st.caption(
+    "Peta sempadan DUN, pusat mengundi dan ringkasan kawasan."
+)
+
+
+# --------------------------------------------------
+# SIDEBAR
+# --------------------------------------------------
 
 with st.sidebar:
     st.header("Kawalan peta")
@@ -58,6 +161,11 @@ with st.sidebar:
         ]
     )
 
+    show_centres = st.checkbox(
+        "Tunjuk pusat mengundi",
+        value=True
+    )
+
     st.divider()
 
     st.markdown(
@@ -69,6 +177,10 @@ with st.sidebar:
     )
 
 
+# --------------------------------------------------
+# SUMMARY METRICS
+# --------------------------------------------------
+
 col1, col2, col3, col4 = st.columns(4)
 
 col1.metric("Pemilih berdaftar", "26,455")
@@ -77,15 +189,21 @@ col3.metric("Pusat mengundi", "10")
 col4.metric("Keluar mengundi 2021", "66.2%")
 
 
+# --------------------------------------------------
+# TABS
+# --------------------------------------------------
+
 tab1, tab2, tab3 = st.tabs(
     ["Peta DUN", "Profil Pengundi", "Trafik"]
 )
 
 
+# --------------------------------------------------
+# MAP TAB
+# --------------------------------------------------
+
 with tab1:
     st.subheader(f"Peta Paya Rumput: {time_slot}")
-
-    map_data = load_paya_rumput_boundary()
 
     peta = folium.Map(
         location=MAP_CENTER,
@@ -110,9 +228,10 @@ with tab1:
             name="Satelit"
         ).add_to(peta)
 
-    if map_data:
+    # DUN boundary
+    if boundary:
         folium.GeoJson(
-            map_data,
+            boundary,
             name="Sempadan DUN N13",
             style_function=lambda _: {
                 "color": "#1565C0",
@@ -122,7 +241,36 @@ with tab1:
             }
         ).add_to(peta)
 
-    folium.LayerControl().add_to(peta)
+    # Polling-centre pins
+    if show_centres and not polling_centres.empty:
+        for _, centre in polling_centres.iterrows():
+
+            google_link = (
+                f"https://www.google.com/maps?q="
+                f"{centre['lat']},{centre['lon']}"
+            )
+
+            popup = f"""
+            <b>{centre['name']}</b><br>
+            Daerah mengundi: {centre['district']}<br><br>
+            <a href="{google_link}" target="_blank">
+            Open Google Maps
+            </a>
+            """
+
+            folium.Marker(
+                location=[centre["lat"], centre["lon"]],
+                popup=popup,
+                tooltip=centre["name"],
+                icon=folium.Icon(
+                    color="blue",
+                    icon="flag"
+                ),
+            ).add_to(peta)
+
+    folium.LayerControl(
+        collapsed=False
+    ).add_to(peta)
 
     st_folium(
         peta,
@@ -130,11 +278,20 @@ with tab1:
         use_container_width=True
     )
 
-    st.info(
-        "Versi pertama ini memaparkan sempadan DUN dan pilihan peta jalan/satelit. "
-        "Selepas ini kita tambah pusat mengundi, PDM, pasar dan lokasi komuniti."
-    )
+    if polling_centres.empty:
+        st.warning(
+            "Pusat mengundi belum berjaya ditemui secara automatik. "
+            "Cuba refresh aplikasi sekali lagi."
+        )
+    else:
+        st.success(
+            f"{len(polling_centres)} pusat mengundi berjaya dipin secara automatik."
+        )
 
+
+# --------------------------------------------------
+# VOTER PROFILE TAB
+# --------------------------------------------------
 
 with tab2:
     st.subheader("Profil pengundi keseluruhan DUN")
@@ -143,6 +300,7 @@ with tab2:
 
     with left:
         st.write("Jantina")
+
         st.bar_chart(
             pd.DataFrame(
                 {"Peratus": [50.8, 49.2]},
@@ -152,15 +310,22 @@ with tab2:
 
     with middle:
         st.write("Kaum")
+
         st.bar_chart(
             pd.DataFrame(
                 {"Peratus": [61.0, 30.0, 6.4, 2.6]},
-                index=["Melayu", "Cina", "India", "Lain-lain"]
+                index=[
+                    "Melayu",
+                    "Cina",
+                    "India",
+                    "Lain-lain"
+                ]
             )
         )
 
     with right:
         st.write("Umur")
+
         st.bar_chart(
             pd.DataFrame(
                 {
@@ -191,6 +356,10 @@ with tab2:
     )
 
 
+# --------------------------------------------------
+# TRAFFIC TAB
+# --------------------------------------------------
+
 with tab3:
     st.subheader("Trafik")
 
@@ -199,8 +368,8 @@ with tab3:
     )
 
     st.info(
-        "Kita akan tambah fail trafik kemudian untuk simpan pemerhatian "
-        "mengikut jalan, tarikh dan masa."
+        "Selepas ini kita boleh tambah lokasi pasar, restoran, dewan komuniti "
+        "dan rekod trafik mengikut masa."
     )
 
     st.markdown(
