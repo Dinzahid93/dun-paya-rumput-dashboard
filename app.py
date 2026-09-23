@@ -27,7 +27,7 @@ COLOURS = ["#0d9488", "#7c3aed", "#e07a12", "#db2777", "#2563eb", "#647c18"]
 PDMS = ["Hujong Padang", "Krubong", "Pantai Cheng", "Cheng Perdana", "Cheng", "Tanjung Minyak"]
 PDM_COLOUR = dict(zip(PDMS, COLOURS))
 
-# Published coordinates, NOT field-verified locations. Never snap points inside.
+# Published/user-provided coordinates, NOT field-verified. Never snap points inside.
 # Names/PDM assignments are a historical 2022 list, not a current SPR guarantee.
 RAW = [
     (1, PDMS[0], "SK Paya Rumput", 2.294033, 102.216130, APAC + "mba2031-sk-paya-rumput.html"),
@@ -39,7 +39,7 @@ RAW = [
     (7, PDMS[3], "SK Tanjung Minyak", 2.266660, 102.215000, APAC + "mba2045-sk-tanjung-minyak.html"),
     (8, PDMS[4], "SMK Tun Haji Abd Malek", 2.266380, 102.213000, APAC + "mea2094-smk-tun-haji-abd-malek.html"),
     (9, PDMS[5], "SK Tanjung Minyak 2", 2.268481, 102.194046, APAC + "mba2048-sk-tanjung-minyak-2.html"),
-    (10, PDMS[5], "SRA JAIM Tanjung Minyak 2", None, None, "https://eduagama.my/sekolah/sra-jaim-tanjung-minyak-2-melaka-tengah/"),
+    (10, PDMS[5], "SRA JAIM Tanjung Minyak 2", 2.265000921808834, 102.2005232181811, "https://www.google.com/maps/search/?api=1&query=2.265000921808834,102.2005232181811"),
 ]
 ETHNICITY = ["Melayu", "Cina", "India", "Lain-lain", "Bumi Sabah", "Bumi Sarawak", "Orang Asli"]
 ETHNIC_VALUES = [61.0, 30.0, 6.4, 1.9, 0.4, 0.2, 0.0]
@@ -112,6 +112,7 @@ def audit_locations(boundary):
         return "Dalam polygon" if covers(boundary["geometry"], row.Lat, row.Lon) else "Luar polygon - semak"
     df["Semakan"] = df.apply(status, axis=1)
     df["Kualiti"] = df.Lat.apply(lambda x: "Belum ditentukan" if pd.isna(x) else "Direktori; belum semakan lapangan")
+    df.loc[df.No == 10, "Kualiti"] = "Koordinat diberikan pengguna; belum disahkan bebas"
     df["Google Maps"] = df.Lokasi.apply(lambda n: "https://www.google.com/maps/search/?api=1&query=" + quote_plus(n + ", Melaka"))
     return df
 
@@ -188,7 +189,7 @@ def make_pdf(boundary, selected, shown):
              p("Sempadan: ElectionData.MY, persempadanan 2018. Bukan pengesahan undang-undang atau ukuran lot."),
              Image(figure_bytes(overview_figure(boundary, shown)), width=490, height=343),
              p("Peta cetakan ialah rajah sempadan, bukan imej satelit. Bulatan berbingkai merah = luar polygon sumber."),
-             p("Koordinat direktori belum disahkan di lapangan. Dua lokasi tiada pin: Dewan Komuniti PPR Krubong dan SRA JAIM Tanjung Minyak 2."),
+             p("Koordinat direktori belum disahkan di lapangan. Koordinat SRA JAIM Tanjung Minyak 2 diberikan pengguna, belum disahkan bebas. Dewan Komuniti PPR Krubong masih tiada koordinat."),
              PageBreak(), Paragraph("Senarai dan semakan lokasi", styles["Title"])]
     table = [["No", "Lokasi / PDM", "Koordinat / semakan"]]
     visible = set(shown.No)
@@ -268,7 +269,7 @@ def main():
                ("Belum ada koordinat",int(selected.Lat.isna().sum()))]
     for col,(label,value) in zip(st.columns(4),metrics):
         col.metric(label,value)
-    st.warning("Audit 10 rekod: 7 koordinat dalam polygon, 1 luar (SK Tanjung Minyak 2), 2 belum ditentukan. Dalam polygon tidak bermaksud koordinat telah disahkan.")
+    st.warning("Audit 10 rekod: 7 koordinat dalam polygon, 2 luar (SK Tanjung Minyak 2 dan SRA JAIM Tanjung Minyak 2), 1 belum ditentukan. Dalam polygon tidak bermaksud koordinat telah disahkan.")
     map_tab, graph_tab, audit_tab = st.tabs(["Peta", "Carta berwarna", "Audit & muat turun"])
 
     with map_tab:
@@ -291,7 +292,7 @@ def main():
             bounds[1][1] = max(bounds[1][1],r.Lon)
             exact = f"https://www.google.com/maps/search/?api=1&query={r.Lat},{r.Lon}"
             popup = (f"<b>{r.No}. {escape(r.Lokasi)}</b><br>{r.PDM}<br>{r.Semakan}"
-                     f"<br>{r.Lat:.6f}, {r.Lon:.6f}<br>Koordinat direktori, bukan disahkan lapangan."
+                     f"<br>{r.Lat:.6f}, {r.Lon:.6f}<br>{escape(r.Kualiti)}"
                      f'<br><a href="{exact}" target="_blank">Buka koordinat ini</a>'
                      f'<br><a href="{r["Google Maps"]}" target="_blank">Cari nama di Google Maps</a>'
                      f'<br><a href="{r.Sumber}" target="_blank">Sumber</a>')
@@ -303,7 +304,7 @@ def main():
         m.fit_bounds(bounds,padding=(25,25))
         st_folium(m,height=620,use_container_width=True,returned_objects=[])
         st.caption("Titik tengah bulatan ialah koordinat sebenar. Sempadan sumber 2018 bukan ukuran lot; tiada sempadan PDM direka.")
-        st.info("Dua rekod tanpa pin masih ada dalam tab Audit. Peta Google boleh dibuka melalui pautan setiap rekod; basemap di sini bukan Google.")
+        st.info("Dewan Komuniti PPR Krubong masih tiada pin; rekod kekal dalam tab Audit. Pin SRA menggunakan koordinat tepat yang diberikan pengguna. Peta Google boleh dibuka melalui pautan setiap rekod; basemap di sini bukan Google.")
 
     with graph_tab:
         st.subheader("Profil seluruh DUN · GE-15 (2022)")
@@ -316,7 +317,7 @@ def main():
         st.dataframe(audit,use_container_width=True,hide_index=True,
                      column_config={"Google Maps":st.column_config.LinkColumn("Google Maps"),
                                     "Sumber":st.column_config.LinkColumn("Sumber")})
-        st.caption("SK Tanjung Minyak 2: pertindihan sumber belum diselesaikan. Semak bangunan/pintu masuk dan sempadan beresolusi lebih tinggi; jangan alih pin untuk memaksanya masuk.")
+        st.caption("SK Tanjung Minyak 2 dan SRA JAIM Tanjung Minyak 2: percanggahan dengan polygon sumber belum diselesaikan. Semak bangunan/pintu masuk dan sempadan beresolusi lebih tinggi; jangan alih pin untuk memaksanya masuk.")
         st.markdown(f"[Senarai pusat / PDM rujukan 2022]({LIST_URL}) · [Sempadan sumber]({BOUNDARY_URL})")
         st.download_button("Muat turun audit 10 lokasi",audit.to_csv(index=False).encode("utf-8-sig"),
                            file_name="audit_lokasi.csv",mime="text/csv")
