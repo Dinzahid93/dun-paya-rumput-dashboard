@@ -260,6 +260,21 @@ def build_map(boundary, audit):
     return m
 
 
+def render_live_traffic(st, boundary):
+    from streamlit.components.v1 import iframe
+    points = [p for poly in polygons(boundary["geometry"]) for ring in poly for p in ring]
+    lat = (min(p[1] for p in points) + max(p[1] for p in points)) / 2
+    lon = (min(p[0] for p in points) + max(p[0] for p in points)) / 2
+    st.subheader("Trafik semasa · Paya Rumput")
+    st.caption("Waze Live Map · Paparan keadaan semasa, bukan ramalan sepanjang hari.")
+    src = f"https://embed.waze.com/iframe?zoom=14&lat={lat:.6f}&lon={lon:.6f}"
+    iframe(src, height=720, scrolling=False)
+    st.caption("Zum dan gerakkan peta untuk melihat jalan serta laporan yang tersedia. Tiada warna kesesakan tidak semestinya bermaksud jalan lancar. Ikon pengguna Waze bukan ukuran kesesakan.")
+    with st.expander("Liputan & sumber"):
+        st.write("Peta berpusat pada kawasan Paya Rumput, tetapi jalan berdekatan turut kelihatan. Waze mengawal kandungan dan kemas kini. Sempadan DUN tidak boleh ditindih atau digunakan untuk memotong iframe ini. Paparan ini tidak menyediakan pilihan masa lampau atau ramalan 06:00–00:00, dan tidak termasuk dalam PDF dashboard.")
+        st.markdown("[Sumber: Waze Live Map](https://developers.google.com/waze/iframe)")
+
+
 def main():
     import streamlit as st
     from streamlit_folium import st_folium
@@ -271,7 +286,7 @@ def main():
     border-radius:12px;padding:14px}
     </style>""",unsafe_allow_html=True)
     st.title("📍 Paya Rumput")
-    st.caption("N13 · Melaka · Peta maklumat awam & profil DUN · Versi 3.3")
+    st.caption("N13 · Melaka · Trafik semasa & maklumat kawasan · Versi 3.6")
     try:
         boundary = st.cache_data(ttl=86400)(load_boundary)()
     except Exception as exc:
@@ -280,10 +295,10 @@ def main():
         st.stop()
     audit = audit_locations(boundary)
 
-    st.columns([1,3])[0].metric("PDM",len(PDMS))
-    map_tab, graph_tab, traffic_tab, audit_tab = st.tabs(["Peta", "Info DUN", "Trafik lampau", "Audit & muat turun"])
+    traffic_tab, map_tab, graph_tab, audit_tab = st.tabs(["Trafik semasa", "Peta", "Info DUN", "Audit & muat turun"])
 
     with map_tab:
+        st.columns([1,3])[0].metric("PDM",len(PDMS))
         st.caption("Tick / untick PDM di penjuru kanan peta. Warna pin mengikut PDM.")
         m = build_map(boundary,audit)
         st_folium(m,height=650,use_container_width=True,returned_objects=[],key="paya_rumput_map_v32")
@@ -296,8 +311,7 @@ def main():
         st.caption("Profil penduduk mengundi seluruh DUN; bukan demografi pengguna jalan atau pengunjung lokasi.")
 
     with traffic_tab:
-        from traffic import render_traffic
-        render_traffic(st, boundary, covers)
+        render_live_traffic(st, boundary)
 
     with audit_tab:
         st.info("Semakan sumber: 7 koordinat dalam polygon, 2 luar, 1 belum ditentukan. Koordinat dan sempadan kekal tidak diubah.")
