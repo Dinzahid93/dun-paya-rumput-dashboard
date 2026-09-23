@@ -286,16 +286,16 @@ def main():
     border-radius:12px;padding:14px}
     </style>""",unsafe_allow_html=True)
     st.title("📍 Paya Rumput")
-    st.caption("N13 · Melaka · Trafik semasa & maklumat kawasan · Versi 3.6")
+    st.caption("N13 · Melaka · Simulasi trafik & maklumat kawasan · Versi 3.8")
     try:
         boundary = st.cache_data(ttl=86400)(load_boundary)()
     except Exception as exc:
         st.error(f"Sempadan gagal dimuatkan: {exc}")
-        st.info("Muat naik boundary.geojson daripada pakej ke folder yang sama dengan app.py. Tiada sempadan atau pin rekaan digunakan.")
+        st.info("Muat naik boundary.geojson daripada pakej ke folder yang sama dengan app.py. Tiada sempadan atau pin simulasi digunakan.")
         st.stop()
     audit = audit_locations(boundary)
 
-    traffic_tab, map_tab, graph_tab, audit_tab = st.tabs(["Trafik semasa", "Peta", "Info DUN", "Audit & muat turun"])
+    traffic_tab, map_tab, graph_tab, audit_tab = st.tabs(["Simulasi trafik", "Peta", "Info DUN", "Audit & muat turun"])
 
     with map_tab:
         st.columns([1,3])[0].metric("PDM",len(PDMS))
@@ -311,7 +311,8 @@ def main():
         st.caption("Profil penduduk mengundi seluruh DUN; bukan demografi pengguna jalan atau pengunjung lokasi.")
 
     with traffic_tab:
-        render_live_traffic(st, boundary)
+        from simulation import render_simulation
+        render_simulation(st, boundary)
 
     with audit_tab:
         st.info("Semakan sumber: 7 koordinat dalam polygon, 2 luar, 1 belum ditentukan. Koordinat dan sempadan kekal tidak diubah.")
