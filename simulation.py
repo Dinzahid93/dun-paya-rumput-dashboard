@@ -2,12 +2,15 @@
 import io
 import json
 import math
+import hashlib
+from collections import Counter
 from html import escape
 from pathlib import Path
 
 import pandas as pd
 from matplotlib.figure import Figure
 from matplotlib.patches import Polygon
+from matplotlib.collections import LineCollection
 
 NOTICE = "SIMULASI TRAFIK"
 
@@ -31,6 +34,22 @@ def level(value):
     return "Sangat tinggi", "#dc2626"
 
 
+def road_seed(road):
+    p=road['properties']
+    identity=p['name'] if not p['name'].startswith('Jalan tanpa nama') else str(p.get('osm_id',p['id']))
+    return int(hashlib.sha256(identity.encode('utf-8')).hexdigest()[:8],16)
+
+
+def road_score(road,hour):
+    factor={'motorway':1.05,'trunk':1.05,'primary':1.0,'secondary':1.0,'tertiary':.95,
+            'residential':.78,'living_street':.65,'service':.55,'track':.38}.get(road['properties'].get('highway','').replace('_link',''),.85)
+    return max(0,min(100,round(score(road_seed(road),hour)*factor)))
+
+
+def road_width(road):
+    return 3.5 if road['properties'].get('highway','').replace('_link','') in ('motorway','trunk','primary','secondary','tertiary') else 1.8
+
+
 def load_roads():
     return json.loads(Path(__file__).with_name("demo_roads.geojson").read_text(encoding="utf-8"))["features"]
 
@@ -38,14 +57,15 @@ def load_roads():
 def make_data(roads):
     return [{"Status": NOTICE, "Jam": f"{h:02d}:00" if h < 24 else "00:00 (+1 hari)",
              "ID": road["properties"]["id"], "Segmen": road["properties"]["name"],
-             "Skor simulasi 0-100": score(i, h), "Tahap simulasi": level(score(i, h))[0]}
+             "Kelas OSM": road['properties'].get('highway',''),
+             "Skor simulasi 0-100": road_score(road, h), "Tahap simulasi": level(road_score(road, h))[0]}
             for h in range(6, 25) for i, road in enumerate(roads)]
 
 
 def demo_html(boundary, roads):
     import folium
     from branca.element import Element, MacroElement, Template
-    m = folium.Map(tiles="OpenStreetMap", control_scale=True)
+    m = folium.Map(tiles="OpenStreetMap", control_scale=True, prefer_canvas=True)
     folium.TileLayer(
         tiles="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
         attr="Esri, Maxar, Earthstar Geographics, and the GIS User Community",
@@ -57,20 +77,20 @@ def demo_html(boundary, roads):
     m.get_root().html.add_child(Element('''<div style="position:fixed;top:12px;left:55px;z-index:9999;background:#f0fdfa;color:#115e59;border:1px solid #5eead4;border-radius:9px;padding:10px 14px;font:bold 14px Arial;pointer-events:none">SIMULASI TRAFIK<br><span style="font-size:11px;font-weight:normal">Bukan trafik sebenar atau ramalan Google</span></div>'''))
     records = []
     for i, road in enumerate(roads):
-        values = [score(i, 6 + n / 2) for n in range(37)]
+        values = [road_score(road, 6 + n / 2) for n in range(37)]
         records.append({"geometry": road["geometry"], "name": escape(road["properties"]["name"]),
-                        "id": road["properties"]["id"], "values": values})
+                        "id": road["properties"]["id"], "values": values, "width":road_width(road)})
     ctl = MacroElement()
     ctl.data = json.dumps(records).replace("<", "\\u003c")
     ctl._template = Template('''{% macro script(this, kwargs) %}
     (function(){
       const map = {{this._parent.get_name()}}, roads = {{this.data | safe}};
+      map.attributionControl.addAttribution('Roads © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a> · ODbL');
       function color(v){return v<30?'#16a34a':v<50?'#eab308':v<70?'#f97316':'#dc2626';}
       function label(v){return v<30?'Rendah':v<50?'Sederhana':v<70?'Tinggi':'Sangat tinggi';}
       const layers = roads.map(r => {
-        const glow = L.geoJSON(r.geometry,{style:{color:'#eab308',weight:16,opacity:.23,interactive:false}}).addTo(map);
-        const line = L.geoJSON(r.geometry,{style:{color:'#eab308',weight:7,opacity:1}}).addTo(map);
-        return {glow,line};
+        const line = L.geoJSON(r.geometry,{style:{color:'#eab308',weight:r.width,opacity:.95}}).addTo(map);
+        return {line};
       });
       const Control = L.Control.extend({onAdd:function(){
         const div=L.DomUtil.create('div');
@@ -86,7 +106,7 @@ def demo_html(boundary, roads):
           let sum=0, high=0;
           roads.forEach((r,i)=>{
             const v=r.values[idx];sum+=v;if(v>=70)high++;
-            layers[i].glow.setStyle({color:color(v)});layers[i].line.setStyle({color:color(v)});
+            layers[i].line.setStyle({color:color(v)});
             layers[i].line.eachLayer(l=>{
               const popup='<b>SIMULASI TRAFIK</b><br><b>'+r.id+' · '+r.name+'</b><br>'+time+' · '+label(v)+'<br>Skor simulasi: '+v+'/100<br>Bukan trafik sebenar atau ramalan Google.';
               if(l.getPopup())l.setPopupContent(popup);else l.bindPopup(popup);
@@ -96,7 +116,8 @@ def demo_html(boundary, roads):
           });
           div.querySelector('.stats').textContent='Purata simulasi '+Math.round(sum/roads.length)+'/100 · '+high+' segmen merah / '+roads.length;
         }
-        slider.addEventListener('input',update);
+        let pending=0;
+        slider.addEventListener('input',()=>{if(pending)cancelAnimationFrame(pending);pending=requestAnimationFrame(()=>{pending=0;update();});});
         div.querySelector('.noon').onclick=()=>{slider.value=12;update();};
         div.querySelector('.night').onclick=()=>{slider.value=20;update();};
         update();return div;
@@ -111,9 +132,9 @@ def curve_figure(roads):
     fig = Figure(figsize=(11, 2.6), facecolor="white", constrained_layout=True)
     ax = fig.subplots()
     hours = list(range(6,25))
-    means = [sum(score(i,h) for i in range(len(roads)))/len(roads) for h in hours]
+    means = [sum(road_score(r,h) for r in roads)/len(roads) for h in hours]
     ax.bar(hours, means, color=[level(v)[1] for v in means], width=.65)
-    ax.set(ylim=(0,100), ylabel="Skor simulasi (0-100)", title="SIMULASI TRAFIK - purata segmen contoh")
+    ax.set(ylim=(0,100), ylabel="Skor simulasi (0-100)", title="SIMULASI TRAFIK - purata segmen jalan OSM")
     ax.set_xticks(hours, [str(h) if h<24 else "00*" for h in hours])
     ax.set_xlabel("Jam MYT (andaian) | *00 = tengah malam hari berikutnya")
     ax.spines[["top","right"]].set_visible(False)
@@ -127,14 +148,13 @@ def comparison_figure(boundary, roads):
     for ax,h in zip(axes,[12,20]):
         for poly in polys:
             ax.add_patch(Polygon(poly[0],facecolor="#ecfeff",edgecolor="#0891b2",linewidth=1.3))
+        segments=[];colours=[];widths=[]
         for i,road in enumerate(roads):
             geom=road["geometry"]
             parts=[geom["coordinates"]] if geom["type"]=="LineString" else geom["coordinates"]
             for part in parts:
-                ax.plot([p[0] for p in part],[p[1] for p in part],color=level(score(i,h))[1],linewidth=4,solid_capstyle="round")
-            midpoint=parts[0][len(parts[0])//2]
-            offset={2:(-26,0),3:(6,13),4:(9,-9)}.get(i,(4,4))
-            ax.annotate(road['properties']['id'],midpoint,xytext=offset,textcoords='offset points',fontsize=7,color='#334155')
+                segments.append(part);colours.append(level(road_score(road,h))[1]);widths.append(road_width(road)/3)
+        ax.add_collection(LineCollection(segments,colors=colours,linewidths=widths))
         ax.autoscale_view()
         ax.set_aspect('equal')
         ax.set_title(f"{h:02d}:00 MYT - SIMULASI",fontweight='bold',color='#0f766e')
@@ -164,22 +184,22 @@ def make_demo_pdf(boundary, roads):
     def figure(fig,x,y,width,height):
         img=io.BytesIO();fig.savefig(img,format='png',dpi=160);img.seek(0)
         c.drawImage(ImageReader(img),x,y,width=width,height=height,mask='auto')
-    header('Paya Rumput | Perbandingan 12:00 PM dan 8:00 PM | 9 segmen contoh')
+    header(f'Paya Rumput | 12:00 PM dan 8:00 PM | {len(roads):,} segmen jalan OSM')
     figure(comparison_figure(boundary,roads),45,76,w-90,h-155)
     for i,(label,color) in enumerate([('Rendah 0-29','#16a34a'),('Sederhana 30-49','#eab308'),('Tinggi 50-69','#f97316'),('Sangat tinggi 70-100','#dc2626')]):
         x=45+i*190;c.setFillColor(HexColor(color));c.rect(x,52,16,6,fill=1,stroke=0)
         c.setFillColor(HexColor('#334155'));c.setFont('DemoSans',9);c.drawString(x+23,51,label)
     c.showPage();header('Pola harian simulasi | 06:00 hingga 00:00 hari berikutnya')
     figure(curve_figure(roads),35,h-285,w-70,200)
-    c.setFont('DemoSans-Bold',10);c.drawString(40,h-309,'Segmen contoh (geometri rujukan sahaja; semua skor ialah simulasi)')
+    c.setFont('DemoSans-Bold',10);c.drawString(40,h-309,'Liputan kelas jalan OSM (semua skor trafik ialah simulasi)')
     c.setFont('DemoSans',8)
-    for i,road in enumerate(roads):
-        name=road['properties']['name']
-        c.drawString(40,h-331-i*16,f"{road['properties']['id']}: {name[:135]}")
+    counts=sorted(Counter(r['properties'].get('highway','unknown') for r in roads).items())
+    for i,(kind,count) in enumerate(counts):
+        c.drawString(40+(i//7)*370,h-331-(i%7)*16,f'{kind}: {count:,} segmen')
     c.setFont('DemoSans',8)
     c.drawString(40,78,'Andaian: puncak pagi, tengah hari dan petang dengan variasi mengikut segmen; tiada latihan atau pengesahan data.')
-    c.drawString(40,63,'Sempadan: ElectionData.MY 2018. Garisan contoh: TomTom melalui arkib awam mygov, dipotong pada sempadan.')
-    c.drawString(40,48,'Liputan tidak mewakili semua jalan. Fail demo_roads.geojson menyimpan pautan sumber geometri.')
+    c.drawString(40,63,'Jalan: © OpenStreetMap contributors (ODbL). www.openstreetmap.org/copyright | Sempadan: ElectionData.MY 2018.')
+    c.drawString(40,48,'Semua segmen terpilih dalam ekstrak OSM dipotong pada sempadan; jalan yang belum dipetakan mungkin tiada.')
     c.save();return out.getvalue()
 
 
@@ -194,11 +214,12 @@ def render_simulation(st,boundary):
         return
     page=demo_html(boundary,roads)
     html(page,height=760)
-    st.caption('Gerakkan masa 6 AM–12 AM di dalam peta; butang 12 PM / 8 PM tersedia. Warna berubah tanpa memuat semula peta. Hanya 9 segmen contoh dipaparkan, bukan semua jalan.')
+    st.caption(f'{len(roads):,} segmen jalan OSM dalam sempadan DUN. Gerakkan masa 6 AM–12 AM atau guna 12 PM / 8 PM. Warna berubah tanpa memuat semula peta.')
     st.pyplot(curve_figure(roads),use_container_width=True)
     with st.expander('Cara simulasi dibina'):
-        st.write('Skor 0–100 dijana daripada lengkung puncak pagi, tengah hari dan petang berdasarkan andaian, dengan variasi simulasi mengikut segmen. Tiada data Google, Waze, kiraan kenderaan, demografi atau ramalan terlatih digunakan untuk skor. Geometri jalan contoh dan sempadan datang daripada fail rujukan sedia ada; ini bukan peta liputan semua jalan.')
+        st.write('Skor 0–100 menggunakan andaian waktu puncak dan kelas jalan. Ini bukan trafik sebenar. Semua jalan kenderaan terpilih dalam ekstrak OpenStreetMap dipotong kepada sempadan DUN, termasuk jalan utama, perumahan, servis dan trek. Laluan pejalan kaki, basikal, jalan dalam pembinaan dan jalan bertanda larangan kenderaan tidak disertakan. Jalan yang belum dipetakan mungkin tiada; akses fizikal setiap jalan tidak disahkan.')
+        st.markdown('[Geometri jalan © OpenStreetMap contributors · ODbL](https://www.openstreetmap.org/copyright)')
     c1,c2,c3=st.columns(3)
-    c1.download_button('PDF simulasi · 12 PM & 8 PM',make_demo_pdf(boundary,roads),'SIMULASI_paya_rumput.pdf','application/pdf')
+    c1.download_button('PDF simulasi · 12 PM & 8 PM',st.cache_data(show_spinner=False)(make_demo_pdf)(boundary,roads),'SIMULASI_paya_rumput.pdf','application/pdf')
     c2.download_button('CSV simulasi · semua jam',pd.DataFrame(make_data(roads)).to_csv(index=False).encode('utf-8-sig'),'SIMULASI_trafik.csv','text/csv')
     c3.download_button('Peta simulasi HTML',page.encode('utf-8'),'SIMULASI_peta.html','text/html')

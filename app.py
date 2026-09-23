@@ -286,7 +286,7 @@ def main():
     border-radius:12px;padding:14px}
     </style>""",unsafe_allow_html=True)
     st.title("📍 Paya Rumput")
-    st.caption("N13 · Melaka · Simulasi trafik & maklumat kawasan · Versi 3.8")
+    st.caption("N13 · Melaka · Simulasi trafik & maklumat kawasan · Versi 3.9")
     try:
         boundary = st.cache_data(ttl=86400)(load_boundary)()
     except Exception as exc:

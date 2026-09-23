@@ -1,0 +1,17 @@
+Road geometry attribution and licence
+
+demo_roads.geojson contains adapted OpenStreetMap road data, clipped to the
+Paya Rumput boundary. Road data copyright OpenStreetMap contributors, available
+under the Open Data Commons Open Database License (ODbL) 1.0.
+
+Attribution: https://www.openstreetmap.org/copyright
+Licence: https://opendatacommons.org/licenses/odbl/1-0/
+
+The adapted road database is supplied under ODbL 1.0. Preserve attribution and
+follow the licence when redistributing this road database or derived databases.
+Each feature includes an OpenStreetMap way URL; metadata includes the source
+snapshot timestamp and selection criteria. The database is provided as GeoJSON
+so it remains available in a machine-readable form.
+
+The traffic scores are a separate fictional simulation, not OpenStreetMap
+traffic data. Boundary geometry is separately sourced from ElectionData.MY.
