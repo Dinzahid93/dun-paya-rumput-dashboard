@@ -271,7 +271,7 @@ def main():
     border-radius:12px;padding:14px}
     </style>""",unsafe_allow_html=True)
     st.title("📍 Paya Rumput")
-    st.caption("N13 · Melaka · Peta maklumat awam & profil DUN · Versi 3.2")
+    st.caption("N13 · Melaka · Peta maklumat awam & profil DUN · Versi 3.3")
     try:
         boundary = st.cache_data(ttl=86400)(load_boundary)()
     except Exception as exc:
@@ -281,7 +281,7 @@ def main():
     audit = audit_locations(boundary)
 
     st.columns([1,3])[0].metric("PDM",len(PDMS))
-    map_tab, graph_tab, audit_tab = st.tabs(["Peta", "Carta berwarna", "Audit & muat turun"])
+    map_tab, graph_tab, traffic_tab, audit_tab = st.tabs(["Peta", "Info DUN", "Trafik lampau", "Audit & muat turun"])
 
     with map_tab:
         st.caption("Tick / untick PDM di penjuru kanan peta. Warna pin mengikut PDM.")
@@ -293,7 +293,11 @@ def main():
         st.subheader("Profil seluruh DUN · GE-15 (2022)")
         st.pyplot(profile_figure(),use_container_width=True)
         st.markdown(f"[Sumber demografi: ElectionData.MY]({PROFILE_URL})")
-        st.caption("Tiada ramalan trafik atau cadangan sasaran kempen. Data ini tidak menunjukkan lokasi, masa pergerakan atau demografi pengunjung.")
+        st.caption("Profil penduduk mengundi seluruh DUN; bukan demografi pengguna jalan atau pengunjung lokasi.")
+
+    with traffic_tab:
+        from traffic import render_traffic
+        render_traffic(st, boundary, covers)
 
     with audit_tab:
         st.info("Semakan sumber: 7 koordinat dalam polygon, 2 luar, 1 belum ditentukan. Koordinat dan sempadan kekal tidak diubah.")
