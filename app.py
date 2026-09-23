@@ -216,9 +216,52 @@ def make_pdf(boundary, selected, shown):
     return buf.getvalue()
 
 
+def build_map(boundary, audit):
+    """All layer toggles run in Leaflet; no Python widgets or fit-on-toggle."""
+    import folium
+    m = folium.Map(location=[2.285,102.225],tiles=None,control_scale=True)
+    folium.TileLayer("OpenStreetMap",name="Peta jalan",show=True).add_to(m)
+    folium.TileLayer(
+        "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+        attr="Tiles © Esri — Source: Esri, Maxar, Earthstar Geographics, and the GIS User Community",
+        name="Satelit (Esri)",show=False,
+    ).add_to(m)
+    layer = folium.GeoJson(
+        boundary,name="Sempadan DUN · 2018",show=True,
+        style_function=lambda f: {"color":"#06b6d4","weight":3,"fillOpacity":.07},
+    ).add_to(m)
+    groups = {}
+    for pdm in PDMS:
+        name = f'<span style="color:{PDM_COLOUR[pdm]}">●</span> {escape(pdm)}'
+        groups[pdm] = folium.FeatureGroup(name=name,overlay=True,show=True).add_to(m)
+    bounds = layer.get_bounds()
+    for _,r in audit.dropna(subset=["Lat","Lon"]).iterrows():
+        bounds[0][0] = min(bounds[0][0],r.Lat)
+        bounds[0][1] = min(bounds[0][1],r.Lon)
+        bounds[1][0] = max(bounds[1][0],r.Lat)
+        bounds[1][1] = max(bounds[1][1],r.Lon)
+        exact = f"https://www.google.com/maps/search/?api=1&query={r.Lat},{r.Lon}"
+        popup = (f"<b>{r.No}. {escape(r.Lokasi)}</b><br>PDM: {escape(r.PDM)}"
+                 f"<br>{r.Lat:.6f}, {r.Lon:.6f}"
+                 f'<br><a href="{exact}" target="_blank">Buka koordinat ini</a>'
+                 f'<br><a href="{r["Google Maps"]}" target="_blank">Cari nama di Google Maps</a>'
+                 f'<details style="margin-top:8px"><summary>Maklumat sumber</summary>'
+                 f'{escape(r.Semakan)}<br>{escape(r.Kualiti)}'
+                 f'<br><a href="{r.Sumber}" target="_blank">Sumber</a></details>')
+        folium.CircleMarker(
+            [r.Lat,r.Lon],radius=9,weight=2,color="white",fill=True,
+            fill_color=PDM_COLOUR[r.PDM],fill_opacity=1,
+            tooltip=f"{r.No}. {r.Lokasi} | PDM: {r.PDM}",
+            popup=folium.Popup(popup,max_width=330),
+        ).add_to(groups[r.PDM])
+    # Runs only when the map is first built, not on overlayadd/overlayremove.
+    m.fit_bounds(bounds,padding=(25,25))
+    folium.LayerControl(position="topright",collapsed=False).add_to(m)
+    return m
+
+
 def main():
     import streamlit as st
-    import folium
     from streamlit_folium import st_folium
 
     st.set_page_config(page_title="Paya Rumput | Peta & Profil",page_icon="📍",layout="wide")
@@ -228,7 +271,7 @@ def main():
     border-radius:12px;padding:14px}
     </style>""",unsafe_allow_html=True)
     st.title("📍 Paya Rumput")
-    st.caption("N13 · Melaka · Peta maklumat awam & profil DUN · Versi 3")
+    st.caption("N13 · Melaka · Peta maklumat awam & profil DUN · Versi 3.2")
     try:
         boundary = st.cache_data(ttl=86400)(load_boundary)()
     except Exception as exc:
@@ -237,74 +280,14 @@ def main():
         st.stop()
     audit = audit_locations(boundary)
 
-    def tick_all(value):
-        for i in range(6):
-            st.session_state[f"pdm_{i}"] = value
-
-    with st.sidebar:
-        st.header("Paparan peta")
-        satellite = st.checkbox("Satelit (Esri)", value=False)
-        show_boundary = st.checkbox("Sempadan DUN 2018", value=True)
-        show_outside = st.checkbox("Papar pin luar polygon untuk semakan", value=True)
-        st.caption("Tidak bertanda satelit = peta jalan OpenStreetMap.")
-        st.divider()
-        st.subheader("Tick PDM")
-        left,right = st.columns(2)
-        left.button("Semua", on_click=tick_all,args=(True,))
-        right.button("Kosongkan",on_click=tick_all,args=(False,))
-        selected_pdms = []
-        for i,name in enumerate(PDMS):
-            if st.checkbox(f"{i+1:02d} · {name}",value=True,key=f"pdm_{i}"):
-                selected_pdms.append(name)
-        st.caption("Warna pin = PDM. Bingkai merah = luar polygon; bukan pin yang telah dialihkan.")
-        for name in PDMS:
-            st.markdown(f'<span style="color:{PDM_COLOUR[name]}">●</span> {name}',unsafe_allow_html=True)
-
-    selected = audit[audit.PDM.isin(selected_pdms)].copy()
-    shown = selected.dropna(subset=["Lat","Lon"])
-    if not show_outside:
-        shown = shown[shown.Semakan == "Dalam polygon"]
-    metrics = [("Rekod dipilih",len(selected)),("Pin di peta",len(shown)),
-               ("Luar polygon",sum(selected.Semakan.str.startswith("Luar"))),
-               ("Belum ada koordinat",int(selected.Lat.isna().sum()))]
-    for col,(label,value) in zip(st.columns(4),metrics):
-        col.metric(label,value)
-    st.warning("Audit 10 rekod: 7 koordinat dalam polygon, 2 luar (SK Tanjung Minyak 2 dan SRA JAIM Tanjung Minyak 2), 1 belum ditentukan. Dalam polygon tidak bermaksud koordinat telah disahkan.")
+    st.columns([1,3])[0].metric("PDM",len(PDMS))
     map_tab, graph_tab, audit_tab = st.tabs(["Peta", "Carta berwarna", "Audit & muat turun"])
 
     with map_tab:
-        m = folium.Map(location=[2.285,102.225],tiles=None,control_scale=True)
-        if satellite:
-            folium.TileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
-                             attr="Tiles © Esri — Source: Esri, Maxar, Earthstar Geographics, and the GIS User Community",
-                             name="Esri World Imagery").add_to(m)
-        else:
-            folium.TileLayer("OpenStreetMap").add_to(m)
-        layer = folium.GeoJson(boundary, name="N13 Paya Rumput · 2018",style_function=lambda f:
-                              {"color":"#06b6d4" if satellite else "#0369a1","weight":3,"fillOpacity":.07})
-        if show_boundary:
-            layer.add_to(m)
-        bounds = layer.get_bounds()
-        for _,r in shown.iterrows():
-            bounds[0][0] = min(bounds[0][0],r.Lat)
-            bounds[0][1] = min(bounds[0][1],r.Lon)
-            bounds[1][0] = max(bounds[1][0],r.Lat)
-            bounds[1][1] = max(bounds[1][1],r.Lon)
-            exact = f"https://www.google.com/maps/search/?api=1&query={r.Lat},{r.Lon}"
-            popup = (f"<b>{r.No}. {escape(r.Lokasi)}</b><br>{r.PDM}<br>{r.Semakan}"
-                     f"<br>{r.Lat:.6f}, {r.Lon:.6f}<br>{escape(r.Kualiti)}"
-                     f'<br><a href="{exact}" target="_blank">Buka koordinat ini</a>'
-                     f'<br><a href="{r["Google Maps"]}" target="_blank">Cari nama di Google Maps</a>'
-                     f'<br><a href="{r.Sumber}" target="_blank">Sumber</a>')
-            folium.CircleMarker([r.Lat,r.Lon],radius=9,weight=3,
-                                color="#dc2626" if r.Semakan.startswith("Luar") else "white",
-                                fill=True,fill_color=PDM_COLOUR[r.PDM],fill_opacity=1,
-                                tooltip=f"{r.No}. {r.Lokasi} | {r.Semakan}",
-                                popup=folium.Popup(popup,max_width=330)).add_to(m)
-        m.fit_bounds(bounds,padding=(25,25))
-        st_folium(m,height=620,use_container_width=True,returned_objects=[])
-        st.caption("Titik tengah bulatan ialah koordinat sebenar. Sempadan sumber 2018 bukan ukuran lot; tiada sempadan PDM direka.")
-        st.info("Dewan Komuniti PPR Krubong masih tiada pin; rekod kekal dalam tab Audit. Pin SRA menggunakan koordinat tepat yang diberikan pengguna. Peta Google boleh dibuka melalui pautan setiap rekod; basemap di sini bukan Google.")
+        st.caption("Tick / untick PDM di penjuru kanan peta. Warna pin mengikut PDM.")
+        m = build_map(boundary,audit)
+        st_folium(m,height=650,use_container_width=True,returned_objects=[],key="paya_rumput_map_v32")
+        st.caption("Pilihan PDM menukar pin sahaja, tanpa menetapkan semula zoom. Tukar Peta jalan / Satelit melalui panel yang sama.")
 
     with graph_tab:
         st.subheader("Profil seluruh DUN · GE-15 (2022)")
@@ -313,6 +296,7 @@ def main():
         st.caption("Tiada ramalan trafik atau cadangan sasaran kempen. Data ini tidak menunjukkan lokasi, masa pergerakan atau demografi pengunjung.")
 
     with audit_tab:
+        st.info("Semakan sumber: 7 koordinat dalam polygon, 2 luar, 1 belum ditentukan. Koordinat dan sempadan kekal tidak diubah.")
         st.subheader("Semua 10 rekod — termasuk yang tiada pin")
         st.dataframe(audit,use_container_width=True,hide_index=True,
                      column_config={"Google Maps":st.column_config.LinkColumn("Google Maps"),
@@ -323,9 +307,9 @@ def main():
                            file_name="audit_lokasi.csv",mime="text/csv")
         st.download_button("Muat turun peta interaktif",m.get_root().render().encode("utf-8"),
                            file_name="peta_paya_rumput.html",mime="text/html")
-        st.download_button("Muat turun PDF berwarna",make_pdf(boundary,selected,shown),
+        st.download_button("Muat turun PDF semua PDM",make_pdf(boundary,audit,audit.dropna(subset=["Lat","Lon"])),
                            file_name="paya_rumput_report.pdf",mime="application/pdf")
-        st.caption("PDF mengikut pilihan PDM/pin; carta demografi kekal seluruh DUN. Peta PDF ialah rajah sempadan tanpa satelit. HTML memerlukan internet untuk jubin peta.")
+        st.caption("PDF, CSV dan HTML mengandungi semua PDM, bukan pilihan tick sementara dalam peta. Carta demografi kekal seluruh DUN. Peta PDF ialah rajah sempadan tanpa satelit; HTML memerlukan internet untuk jubin peta.")
 
 
 if __name__ == "__main__":
