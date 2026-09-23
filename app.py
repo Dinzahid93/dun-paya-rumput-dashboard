@@ -1,299 +1,331 @@
+import io
 import json
 from datetime import datetime
+from html import escape
+from pathlib import Path
 from urllib.parse import quote_plus
+from urllib.request import Request, urlopen
+from zoneinfo import ZoneInfo
 
-import folium
 import pandas as pd
-import requests
-import streamlit as st
-from fpdf import FPDF
-from streamlit_folium import st_folium
-
-
-st.set_page_config(
-    page_title="DUN N13 Paya Rumput",
-    page_icon="📍",
-    layout="wide"
+from matplotlib.figure import Figure
+from matplotlib.font_manager import findfont
+from matplotlib.patches import Polygon as PlotPolygon
+from reportlab.lib import colors
+from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
+from reportlab.platypus import (
+    SimpleDocTemplate, Paragraph, Spacer, Image, Table, TableStyle, PageBreak,
 )
 
-BOUNDARY_URL = (
-    "https://lake.electiondata.my/maps/delimitations/"
-    "peninsular_2018_dun.geojson"
-)
+BOUNDARY_URL = "https://lake.electiondata.my/maps/delimitations/peninsular_2018_dun.geojson"
+PROFILE_URL = "https://electiondata.my/seats/dun/n13-paya-rumput-melaka/"
+LIST_URL = "https://en.wikipedia.org/wiki/Paya_Rumput_(state_constituency)"
+APAC = "https://www.apac.com.my/"
+COLOURS = ["#0d9488", "#7c3aed", "#e07a12", "#db2777", "#2563eb", "#647c18"]
+PDMS = ["Hujong Padang", "Krubong", "Pantai Cheng", "Cheng Perdana", "Cheng", "Tanjung Minyak"]
+PDM_COLOUR = dict(zip(PDMS, COLOURS))
 
-# Fixed locations. No automatic internet geocoding.
-# "Semak" means approximate / needs one visual confirmation on Google Maps.
-POLLING_CENTRES = [
-    {
-        "pdm": "136/13/01 Hujong Padang",
-        "name": "SK Paya Rumput",
-        "lat": 2.294033,
-        "lon": 102.216130,
-        "status": "Disahkan",
-    },
-    {
-        "pdm": "136/13/01 Hujong Padang",
-        "name": "SMK Paya Rumput",
-        "lat": 2.294138,
-        "lon": 102.213694,
-        "status": "Disahkan",
-    },
-    {
-        "pdm": "136/13/02 Krubong",
-        "name": "SK Krubong",
-        "lat": 2.299470,
-        "lon": 102.254610,
-        "status": "Disahkan",
-    },
-    {
-        "pdm": "136/13/02 Krubong",
-        "name": "SMK Krubong",
-        "lat": 2.319217,
-        "lon": 102.245009,
-        "status": "Disahkan",
-    },
-    {
-        "pdm": "136/13/02 Krubong",
-        "name": "Dewan Komuniti PPR Krubong",
-        "lat": 2.283209,
-        "lon": 102.234791,
-        "status": "Semak di Google Maps",
-    },
-    {
-        "pdm": "136/13/03 Pantai Cheng",
-        "name": "SK Cheng",
-        "lat": 2.260514,
-        "lon": 102.224581,
-        "status": "Disahkan",
-    },
-    {
-        "pdm": "136/13/04 Cheng Perdana",
-        "name": "SK Tanjung Minyak",
-        "lat": 2.266660,
-        "lon": 102.215000,
-        "status": "Disahkan",
-    },
-    {
-        "pdm": "136/13/05 Cheng",
-        "name": "SMK Tun Haji Abdul Malek",
-        "lat": 2.266380,
-        "lon": 102.213000,
-        "status": "Disahkan",
-    },
-    {
-        "pdm": "136/13/06 Tanjung Minyak",
-        "name": "SK Tanjung Minyak 2",
-        "lat": 2.268481,
-        "lon": 102.194046,
-        "status": "Disahkan",
-    },
-    {
-        "pdm": "136/13/06 Tanjung Minyak",
-        "name": "SRA JAIM Tanjung Minyak 2",
-        "lat": 2.269100,
-        "lon": 102.195000,
-        "status": "Semak di Google Maps",
-    },
+# Published coordinates, NOT field-verified locations. Never snap points inside.
+# Names/PDM assignments are a historical 2022 list, not a current SPR guarantee.
+RAW = [
+    (1, PDMS[0], "SK Paya Rumput", 2.294033, 102.216130, APAC + "mba2031-sk-paya-rumput.html"),
+    (2, PDMS[0], "SMK Paya Rumput", 2.294138, 102.213694, APAC + "mea2103-smk-paya-rumput.html"),
+    (3, PDMS[1], "SK Krubong / Kerubong", 2.299454, 102.254192, APAC + "mba2030-sk-kerubong.html"),
+    (4, PDMS[1], "SMK Krubong", 2.319217, 102.245009, "https://emis.my/sekolah/sekolah-menengah-kebangsaan-krubong-melaka/"),
+    (5, PDMS[1], "Dewan Komuniti PPR Krubong", None, None, "https://hallsakato.wixsite.com/dewanmelaka/dewan-komuniti"),
+    (6, PDMS[2], "SK Cheng", 2.260514, 102.224581, APAC + "mba2029-sk-cheng.html"),
+    (7, PDMS[3], "SK Tanjung Minyak", 2.266660, 102.215000, APAC + "mba2045-sk-tanjung-minyak.html"),
+    (8, PDMS[4], "SMK Tun Haji Abd Malek", 2.266380, 102.213000, APAC + "mea2094-smk-tun-haji-abd-malek.html"),
+    (9, PDMS[5], "SK Tanjung Minyak 2", 2.268481, 102.194046, APAC + "mba2048-sk-tanjung-minyak-2.html"),
+    (10, PDMS[5], "SRA JAIM Tanjung Minyak 2", None, None, "https://eduagama.my/sekolah/sra-jaim-tanjung-minyak-2-melaka-tengah/"),
 ]
+ETHNICITY = ["Melayu", "Cina", "India", "Lain-lain", "Bumi Sabah", "Bumi Sarawak", "Orang Asli"]
+ETHNIC_VALUES = [61.0, 30.0, 6.4, 1.9, 0.4, 0.2, 0.0]
+AGES = ["18-29", "30-39", "40-49", "50-59", "60-69", "70-79", "80+"]
+AGE_VALUES = [37.6, 20.9, 16.4, 13.0, 8.1, 3.1, 1.0]
+PALETTE = COLOURS + ["#9a6bba"]
 
 
-@st.cache_data(ttl=86400)
-def get_n13_boundary():
-    response = requests.get(BOUNDARY_URL, timeout=30)
-    response.raise_for_status()
-    data = response.json()
-
-    for feature in data["features"]:
-        props = feature.get("properties", {})
-        if (
-            props.get("state") == "Melaka"
-            and props.get("code_dun") == "N.13"
-            and props.get("dun") == "N.13 Paya Rumput"
-        ):
-            return feature
-
-    return None
+def polygons(geometry):
+    if geometry["type"] == "Polygon":
+        return [geometry["coordinates"]]
+    if geometry["type"] == "MultiPolygon":
+        return geometry["coordinates"]
+    raise ValueError("Sempadan mesti Polygon atau MultiPolygon.")
 
 
-def geojson_bounds(geometry):
-    points = []
-
-    def collect(item):
-        if isinstance(item, (list, tuple)):
-            if len(item) >= 2 and isinstance(item[0], (int, float)):
-                points.append(item)
-            else:
-                for child in item:
-                    collect(child)
-
-    collect(geometry["coordinates"])
-
-    lats = [point[1] for point in points]
-    lons = [point[0] for point in points]
-
-    return [[min(lats), min(lons)], [max(lats), max(lons)]]
+def ring_position(x, y, ring):
+    """0 outside, 1 inside, 2 on edge. Coordinates are longitude, latitude."""
+    inside = False
+    for a, b in zip(ring, ring[1:] + ring[:1]):
+        x1, y1 = a[:2]
+        x2, y2 = b[:2]
+        cross = (x-x1)*(y2-y1) - (y-y1)*(x2-x1)
+        if (abs(cross) < 1e-12 and min(x1,x2)-1e-10 <= x <= max(x1,x2)+1e-10
+                and min(y1,y2)-1e-10 <= y <= max(y1,y2)+1e-10):
+            return 2
+        if (y1 > y) != (y2 > y) and x < (x2-x1)*(y-y1)/(y2-y1)+x1:
+            inside = not inside
+    return int(inside)
 
 
-def make_pdf(centres):
-    pdf = FPDF()
-    pdf.add_page()
-    pdf.set_auto_page_break(auto=True, margin=15)
-
-    pdf.set_font("Helvetica", "B", 16)
-    pdf.cell(0, 10, "DUN N13 Paya Rumput - Senarai Lokasi", new_x="LMARGIN", new_y="NEXT")
-
-    pdf.set_font("Helvetica", "", 10)
-    pdf.cell(
-        0,
-        7,
-        f"Dicetak: {datetime.now().strftime('%d %B %Y, %I:%M %p')}",
-        new_x="LMARGIN",
-        new_y="NEXT",
-    )
-    pdf.ln(4)
-
-    pdf.set_font("Helvetica", "B", 10)
-    pdf.cell(45, 8, "PDM", border=1)
-    pdf.cell(90, 8, "Pusat Mengundi", border=1)
-    pdf.cell(45, 8, "Status Koordinat", border=1, new_x="LMARGIN", new_y="NEXT")
-
-    pdf.set_font("Helvetica", "", 9)
-    for centre in centres:
-        pdf.cell(45, 8, centre["pdm"][:27], border=1)
-        pdf.cell(90, 8, centre["name"][:52], border=1)
-        pdf.cell(45, 8, centre["status"], border=1, new_x="LMARGIN", new_y="NEXT")
-
-    return bytes(pdf.output())
+def covers(geometry, lat, lon):
+    for poly in polygons(geometry):
+        outer = ring_position(lon, lat, poly[0])
+        holes = [ring_position(lon, lat, h) for h in poly[1:]]
+        if outer == 2 or (outer == 1 and 1 not in holes):
+            return True
+    return False
 
 
-st.title("📍 DUN N13 Paya Rumput")
-st.caption("Peta pusat mengundi, sempadan DUN dan senarai lokasi untuk kerja lapangan.")
+def validate_boundary(data):
+    features = data.get("features", [data])
+    matches = [f for f in features if
+               f.get("properties", {}).get("state") == "Melaka" and
+               f["properties"].get("code_dun") == "N.13" and
+               "Paya Rumput" in f["properties"].get("dun", "")]
+    if len(matches) != 1:
+        raise ValueError("Tidak jumpa tepat satu sempadan Melaka N.13 Paya Rumput.")
+    feature = matches[0]
+    coords = [p for poly in polygons(feature["geometry"]) for ring in poly for p in ring]
+    if not coords or not all(101 < p[0] < 103 and 1 < p[1] < 3 for p in coords):
+        raise ValueError("Koordinat sempadan tidak sah / bukan WGS84 Melaka.")
+    return feature
 
-df = pd.DataFrame(POLLING_CENTRES)
 
-col1, col2, col3 = st.columns(3)
-col1.metric("PDM", "6")
-col2.metric("Pusat mengundi", len(df))
-col3.metric("Lokasi disahkan", int((df["status"] == "Disahkan").sum()))
+def load_boundary():
+    local = Path(__file__).with_name("boundary.geojson")
+    if local.exists():
+        return validate_boundary(json.loads(local.read_text(encoding="utf-8")))
+    req = Request(BOUNDARY_URL, headers={"User-Agent": "PayaRumputPublicMap/3.0"})
+    with urlopen(req, timeout=30) as response:
+        return validate_boundary(json.load(response))
 
-with st.sidebar:
-    st.header("Tetapan peta")
-    basemap = st.radio("Pilih paparan", ["Peta jalan", "Satelit"])
-    show_boundary = st.checkbox("Papar sempadan DUN N13", value=True)
-    show_check_locations = st.checkbox(
-        "Papar lokasi perlu semak", value=True
-    )
-    selected_pdms = st.multiselect(
-        "Tapis PDM",
-        options=sorted(df["pdm"].unique()),
-        default=sorted(df["pdm"].unique()),
-    )
 
-filtered = df[df["pdm"].isin(selected_pdms)].copy()
+def audit_locations(boundary):
+    df = pd.DataFrame(RAW, columns=["No", "PDM", "Lokasi", "Lat", "Lon", "Sumber"])
+    def status(row):
+        if pd.isna(row.Lat) or pd.isna(row.Lon):
+            return "Tiada koordinat"
+        return "Dalam polygon" if covers(boundary["geometry"], row.Lat, row.Lon) else "Luar polygon - semak"
+    df["Semakan"] = df.apply(status, axis=1)
+    df["Kualiti"] = df.Lat.apply(lambda x: "Belum ditentukan" if pd.isna(x) else "Direktori; belum semakan lapangan")
+    df["Google Maps"] = df.Lokasi.apply(lambda n: "https://www.google.com/maps/search/?api=1&query=" + quote_plus(n + ", Melaka"))
+    return df
 
-if not show_check_locations:
-    filtered = filtered[filtered["status"] == "Disahkan"]
 
-try:
-    boundary = get_n13_boundary()
-except Exception:
-    boundary = None
+def profile_figure():
+    fig = Figure(figsize=(12, 8), facecolor="white", constrained_layout=True)
+    axes = fig.subplots(2, 2)
+    for ax, labels, values, title in [
+        (axes[0,0], ETHNICITY, ETHNIC_VALUES, "Etnik (%)"),
+        (axes[0,1], AGES, AGE_VALUES, "Kumpulan umur (%)"),
+    ]:
+        bars = ax.barh(labels, values, color=PALETTE)
+        ax.bar_label(bars, labels=[f"{v:.1f}%" for v in values], padding=5, fontsize=10)
+        ax.invert_yaxis()
+        ax.set_xlim(0, max(values)*1.24)
+        ax.set_title(title, loc="left", fontweight="bold", pad=14)
+        ax.spines[["top", "right", "bottom"]].set_visible(False)
+        ax.tick_params(axis="x", bottom=False, labelbottom=False)
+    axes[1,0].pie([50.8,49.2], labels=["Wanita", "Lelaki"], autopct="%.1f%%",
+                  colors=["#db2777", "#0d9488"], startangle=90,
+                  wedgeprops={"width":0.4, "edgecolor":"white"})
+    axes[1,0].set_title("Jantina (%)", loc="left", fontweight="bold")
+    ax = axes[1,1]
+    ax.axis("off")
+    ax.text(0, .90, "PROFIL SELURUH DUN", fontsize=16, fontweight="bold", color="#0f766e", va="top")
+    ax.text(0, .72, "ElectionData.MY | GE-15 (2022)", fontsize=12, va="top")
+    ax.text(0, .55, "Bukan pecahan PDM atau pusat mengundi.\nPenapis peta tidak mengubah carta ini.\nJumlah mungkin berbeza sedikit daripada\n100% akibat pembundaran sumber.", fontsize=11, linespacing=1.7, va="top")
+    return fig
 
-peta = folium.Map(
-    location=[2.285, 102.225],
-    zoom_start=13,
-    tiles=None,
-    control_scale=True,
-)
 
-if basemap == "Peta jalan":
-    folium.TileLayer(
-        tiles="OpenStreetMap",
-        name="Peta jalan",
-        control=False,
-    ).add_to(peta)
-else:
-    folium.TileLayer(
-        tiles="https://{s}.google.com/vt/lyrs=s&x={x}&y={y}&z={z}",
-        attr="Google",
-        name="Satelit",
-        subdomains=["mt0", "mt1", "mt2", "mt3"],
-        control=False,
-    ).add_to(peta)
+def overview_figure(boundary, shown):
+    fig = Figure(figsize=(10, 7), facecolor="white", constrained_layout=True)
+    ax = fig.subplots()
+    for poly in polygons(boundary["geometry"]):
+        ax.add_patch(PlotPolygon(poly[0], facecolor="#e0f2fe", edgecolor="#0369a1", linewidth=2))
+        for hole in poly[1:]:
+            ax.add_patch(PlotPolygon(hole, facecolor="white", edgecolor="#0369a1"))
+    for _, r in shown.iterrows():
+        colour = PDM_COLOUR[r.PDM]
+        edge = "#dc2626" if r.Semakan.startswith("Luar") else "white"
+        ax.scatter(r.Lon, r.Lat, s=95, c=colour, edgecolors=edge, linewidths=2, zorder=3)
+        ax.annotate(str(r.No), (r.Lon,r.Lat), xytext=(6,6), textcoords="offset points", fontsize=9)
+    ax.autoscale_view()
+    ax.margins(.08)
+    ax.set_aspect("equal")
+    ax.set_xlabel("Longitude (WGS84)")
+    ax.set_ylabel("Latitude (WGS84)")
+    ax.set_title("Sempadan 2018 dan pin dipaparkan (nombor rujuk jadual)", loc="left")
+    ax.grid(alpha=.15)
+    return fig
 
-if show_boundary and boundary:
-    folium.GeoJson(
-        boundary,
-        name="Sempadan DUN N13",
-        style_function=lambda _: {
-            "fillColor": "#2563eb",
-            "color": "#1d4ed8",
-            "weight": 3,
-            "fillOpacity": 0.08,
-        },
-        tooltip="Sempadan DUN N13 Paya Rumput",
-    ).add_to(peta)
 
-    # This is what the old code was missing:
-    # force map to zoom to the N13 boundary.
-    peta.fit_bounds(geojson_bounds(boundary["geometry"]))
+def figure_bytes(fig):
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", dpi=150, facecolor="white")
+    buf.seek(0)
+    return buf
 
-for _, centre in filtered.iterrows():
-    is_verified = centre["status"] == "Disahkan"
-    colour = "blue" if is_verified else "orange"
-    icon_name = "flag" if is_verified else "question-sign"
 
-    google_link = (
-        "https://www.google.com/maps/search/?api=1&query="
-        + quote_plus(centre["name"] + ", Melaka")
-    )
+def make_pdf(boundary, selected, shown):
+    buf = io.BytesIO()
+    pdfmetrics.registerFont(TTFont("DejaVu",findfont("DejaVu Sans")))
+    pdfmetrics.registerFont(TTFont("DejaVu-Bold",findfont("DejaVu Sans:weight=bold")))
+    styles = getSampleStyleSheet()
+    styles["BodyText"].fontName = "DejaVu"
+    styles["BodyText"].fontSize = 9
+    styles["BodyText"].leading = 12
+    styles["Title"].fontName = "DejaVu-Bold"
+    p = lambda text: Paragraph(text, styles["BodyText"])
+    stamp = datetime.now(ZoneInfo("Asia/Kuala_Lumpur")).strftime("%d/%m/%Y %H:%M MYT")
+    story = [Paragraph("N13 Paya Rumput | Peta & Audit", styles["Title"]),
+             p(stamp), Spacer(1,12),
+             p(f"{len(selected)} rekod dipilih; {len(shown)} pin dipaparkan. Senarai pusat: rujukan 2022."),
+             p("Sempadan: ElectionData.MY, persempadanan 2018. Bukan pengesahan undang-undang atau ukuran lot."),
+             Image(figure_bytes(overview_figure(boundary, shown)), width=490, height=343),
+             p("Peta cetakan ialah rajah sempadan, bukan imej satelit. Bulatan berbingkai merah = luar polygon sumber."),
+             p("Koordinat direktori belum disahkan di lapangan. Dua lokasi tiada pin: Dewan Komuniti PPR Krubong dan SRA JAIM Tanjung Minyak 2."),
+             PageBreak(), Paragraph("Senarai dan semakan lokasi", styles["Title"])]
+    table = [["No", "Lokasi / PDM", "Koordinat / semakan"]]
+    visible = set(shown.No)
+    for _, r in selected.iterrows():
+        coord = "Tiada" if pd.isna(r.Lat) else f"{r.Lat:.6f}, {r.Lon:.6f}"
+        map_status = "Dipaparkan" if r.No in visible else "Tidak dipaparkan"
+        table.append([str(r.No), p(escape(r.Lokasi)+"<br/>"+escape(r.PDM)+
+                     f'<br/><a href="{escape(r.Sumber)}" color="blue">Sumber lokasi</a>'),
+                     p(coord+"<br/>"+r.Semakan+"<br/>"+map_status)])
+    t = Table(table, colWidths=[28,235,227], repeatRows=1)
+    t.setStyle(TableStyle([("BACKGROUND",(0,0),(-1,0),colors.HexColor("#0f766e")),
+                          ("FONTNAME",(0,0),(-1,-1),"DejaVu"),
+                          ("TEXTCOLOR",(0,0),(-1,0),colors.white),
+                          ("ROWBACKGROUNDS",(0,1),(-1,-1),[colors.whitesmoke,colors.white]),
+                          ("VALIGN",(0,0),(-1,-1),"TOP"),
+                          ("TOPPADDING",(0,0),(-1,-1),7),
+                          ("BOTTOMPADDING",(0,0),(-1,-1),7)]))
+    story += [t, Spacer(1,12), p("Sumber senarai: "+LIST_URL),
+              PageBreak(), Paragraph("Profil demografi seluruh DUN",styles["Title"]),
+              Image(figure_bytes(profile_figure()), width=490,height=327),
+              p("Sumber: "+PROFILE_URL),
+              p("Data GE-15 (2022), bukan data semasa. Carta tidak ditapis mengikut PDM. Tiada anggaran piramid umur-jantina kerana nilai silang itu belum disahkan.")]
+    SimpleDocTemplate(buf, rightMargin=42,leftMargin=42,topMargin=35,bottomMargin=35).build(story)
+    return buf.getvalue()
 
-    popup_html = f"""
-    <b>{centre["name"]}</b><br>
-    <b>PDM:</b> {centre["pdm"]}<br>
-    <b>Status:</b> {centre["status"]}<br><br>
-    <a href="{google_link}" target="_blank">
-        Buka / sahkan dalam Google Maps
-    </a>
-    """
 
-    folium.Marker(
-        location=[centre["lat"], centre["lon"]],
-        popup=folium.Popup(popup_html, max_width=300),
-        tooltip=centre["name"],
-        icon=folium.Icon(color=colour, icon=icon_name, prefix="glyphicon"),
-    ).add_to(peta)
+def main():
+    import streamlit as st
+    import folium
+    from streamlit_folium import st_folium
 
-st.subheader("Peta N13")
-st.info(
-    "Biru = koordinat disahkan. Oren = lokasi anggaran; klik pin dan "
-    "buka Google Maps untuk sahkan sebelum gunakan."
-)
-st_folium(peta, height=620, use_container_width=True)
+    st.set_page_config(page_title="Paya Rumput | Peta & Profil",page_icon="📍",layout="wide")
+    st.markdown("""<style>
+    .block-container{padding-top:2rem;max-width:1450px}
+    [data-testid="stMetric"]{border:1px solid #cbd5e1;border-top:4px solid #0d9488;
+    border-radius:12px;padding:14px}
+    </style>""",unsafe_allow_html=True)
+    st.title("📍 Paya Rumput")
+    st.caption("N13 · Melaka · Peta maklumat awam & profil DUN · Versi 3")
+    try:
+        boundary = st.cache_data(ttl=86400)(load_boundary)()
+    except Exception as exc:
+        st.error(f"Sempadan gagal dimuatkan: {exc}")
+        st.info("Muat naik boundary.geojson daripada pakej ke folder yang sama dengan app.py. Tiada sempadan atau pin rekaan digunakan.")
+        st.stop()
+    audit = audit_locations(boundary)
 
-st.subheader("10 pusat mengundi")
-show_df = filtered[["pdm", "name", "status", "lat", "lon"]].rename(
-    columns={
-        "pdm": "PDM",
-        "name": "Pusat mengundi",
-        "status": "Status",
-        "lat": "Latitude",
-        "lon": "Longitude",
-    }
-)
-st.dataframe(show_df, use_container_width=True, hide_index=True)
+    def tick_all(value):
+        for i in range(6):
+            st.session_state[f"pdm_{i}"] = value
 
-csv = show_df.to_csv(index=False).encode("utf-8-sig")
-st.download_button(
-    "Muat turun senarai CSV",
-    data=csv,
-    file_name="pusat_mengundi_n13_paya_rumput.csv",
-    mime="text/csv",
-)
+    with st.sidebar:
+        st.header("Paparan peta")
+        satellite = st.checkbox("Satelit (Esri)", value=False)
+        show_boundary = st.checkbox("Sempadan DUN 2018", value=True)
+        show_outside = st.checkbox("Papar pin luar polygon untuk semakan", value=True)
+        st.caption("Tidak bertanda satelit = peta jalan OpenStreetMap.")
+        st.divider()
+        st.subheader("Tick PDM")
+        left,right = st.columns(2)
+        left.button("Semua", on_click=tick_all,args=(True,))
+        right.button("Kosongkan",on_click=tick_all,args=(False,))
+        selected_pdms = []
+        for i,name in enumerate(PDMS):
+            if st.checkbox(f"{i+1:02d} · {name}",value=True,key=f"pdm_{i}"):
+                selected_pdms.append(name)
+        st.caption("Warna pin = PDM. Bingkai merah = luar polygon; bukan pin yang telah dialihkan.")
+        for name in PDMS:
+            st.markdown(f'<span style="color:{PDM_COLOUR[name]}">●</span> {name}',unsafe_allow_html=True)
 
-st.download_button(
-    "Muat turun senarai PDF",
-    data=make_pdf(filtered.to_dict("records")),
-    file_name="pusat_mengundi_n13_paya_rumput.pdf",
-    mime="application/pdf",
-)
+    selected = audit[audit.PDM.isin(selected_pdms)].copy()
+    shown = selected.dropna(subset=["Lat","Lon"])
+    if not show_outside:
+        shown = shown[shown.Semakan == "Dalam polygon"]
+    metrics = [("Rekod dipilih",len(selected)),("Pin di peta",len(shown)),
+               ("Luar polygon",sum(selected.Semakan.str.startswith("Luar"))),
+               ("Belum ada koordinat",int(selected.Lat.isna().sum()))]
+    for col,(label,value) in zip(st.columns(4),metrics):
+        col.metric(label,value)
+    st.warning("Audit 10 rekod: 7 koordinat dalam polygon, 1 luar (SK Tanjung Minyak 2), 2 belum ditentukan. Dalam polygon tidak bermaksud koordinat telah disahkan.")
+    map_tab, graph_tab, audit_tab = st.tabs(["Peta", "Carta berwarna", "Audit & muat turun"])
+
+    with map_tab:
+        m = folium.Map(location=[2.285,102.225],tiles=None,control_scale=True)
+        if satellite:
+            folium.TileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+                             attr="Tiles © Esri — Source: Esri, Maxar, Earthstar Geographics, and the GIS User Community",
+                             name="Esri World Imagery").add_to(m)
+        else:
+            folium.TileLayer("OpenStreetMap").add_to(m)
+        layer = folium.GeoJson(boundary, name="N13 Paya Rumput · 2018",style_function=lambda f:
+                              {"color":"#06b6d4" if satellite else "#0369a1","weight":3,"fillOpacity":.07})
+        if show_boundary:
+            layer.add_to(m)
+        bounds = layer.get_bounds()
+        for _,r in shown.iterrows():
+            bounds[0][0] = min(bounds[0][0],r.Lat)
+            bounds[0][1] = min(bounds[0][1],r.Lon)
+            bounds[1][0] = max(bounds[1][0],r.Lat)
+            bounds[1][1] = max(bounds[1][1],r.Lon)
+            exact = f"https://www.google.com/maps/search/?api=1&query={r.Lat},{r.Lon}"
+            popup = (f"<b>{r.No}. {escape(r.Lokasi)}</b><br>{r.PDM}<br>{r.Semakan}"
+                     f"<br>{r.Lat:.6f}, {r.Lon:.6f}<br>Koordinat direktori, bukan disahkan lapangan."
+                     f'<br><a href="{exact}" target="_blank">Buka koordinat ini</a>'
+                     f'<br><a href="{r["Google Maps"]}" target="_blank">Cari nama di Google Maps</a>'
+                     f'<br><a href="{r.Sumber}" target="_blank">Sumber</a>')
+            folium.CircleMarker([r.Lat,r.Lon],radius=9,weight=3,
+                                color="#dc2626" if r.Semakan.startswith("Luar") else "white",
+                                fill=True,fill_color=PDM_COLOUR[r.PDM],fill_opacity=1,
+                                tooltip=f"{r.No}. {r.Lokasi} | {r.Semakan}",
+                                popup=folium.Popup(popup,max_width=330)).add_to(m)
+        m.fit_bounds(bounds,padding=(25,25))
+        st_folium(m,height=620,use_container_width=True,returned_objects=[])
+        st.caption("Titik tengah bulatan ialah koordinat sebenar. Sempadan sumber 2018 bukan ukuran lot; tiada sempadan PDM direka.")
+        st.info("Dua rekod tanpa pin masih ada dalam tab Audit. Peta Google boleh dibuka melalui pautan setiap rekod; basemap di sini bukan Google.")
+
+    with graph_tab:
+        st.subheader("Profil seluruh DUN · GE-15 (2022)")
+        st.pyplot(profile_figure(),use_container_width=True)
+        st.markdown(f"[Sumber demografi: ElectionData.MY]({PROFILE_URL})")
+        st.caption("Tiada ramalan trafik atau cadangan sasaran kempen. Data ini tidak menunjukkan lokasi, masa pergerakan atau demografi pengunjung.")
+
+    with audit_tab:
+        st.subheader("Semua 10 rekod — termasuk yang tiada pin")
+        st.dataframe(audit,use_container_width=True,hide_index=True,
+                     column_config={"Google Maps":st.column_config.LinkColumn("Google Maps"),
+                                    "Sumber":st.column_config.LinkColumn("Sumber")})
+        st.caption("SK Tanjung Minyak 2: pertindihan sumber belum diselesaikan. Semak bangunan/pintu masuk dan sempadan beresolusi lebih tinggi; jangan alih pin untuk memaksanya masuk.")
+        st.markdown(f"[Senarai pusat / PDM rujukan 2022]({LIST_URL}) · [Sempadan sumber]({BOUNDARY_URL})")
+        st.download_button("Muat turun audit 10 lokasi",audit.to_csv(index=False).encode("utf-8-sig"),
+                           file_name="audit_lokasi.csv",mime="text/csv")
+        st.download_button("Muat turun peta interaktif",m.get_root().render().encode("utf-8"),
+                           file_name="peta_paya_rumput.html",mime="text/html")
+        st.download_button("Muat turun PDF berwarna",make_pdf(boundary,selected,shown),
+                           file_name="paya_rumput_report.pdf",mime="application/pdf")
+        st.caption("PDF mengikut pilihan PDM/pin; carta demografi kekal seluruh DUN. Peta PDF ialah rajah sempadan tanpa satelit. HTML memerlukan internet untuk jubin peta.")
+
+
+if __name__ == "__main__":
+    main()
