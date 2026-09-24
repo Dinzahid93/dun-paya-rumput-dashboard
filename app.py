@@ -280,6 +280,22 @@ def main():
     from streamlit_folium import st_folium
 
     st.set_page_config(page_title="Paya Rumput | Peta & Profil",page_icon="📍",layout="wide")
+        # Password screen
+    if not st.session_state.get("authenticated", False):
+        st.title("🔒 Paya Rumput")
+
+        with st.form("login_form"):
+            password = st.text_input("Kata laluan", type="password")
+            submitted = st.form_submit_button("Masuk")
+
+        if submitted:
+            if password == "7755":
+                st.session_state["authenticated"] = True
+                st.rerun()
+            else:
+                st.error("Kata laluan salah. Cuba lagi.")
+
+        st.stop()
     st.markdown("""<style>
     .block-container{padding-top:2rem;max-width:1450px}
     [data-testid="stMetric"]{border:1px solid #cbd5e1;border-top:4px solid #0d9488;
