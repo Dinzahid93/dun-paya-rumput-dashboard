@@ -12,7 +12,7 @@ from matplotlib.figure import Figure
 from matplotlib.patches import Polygon
 from matplotlib.collections import LineCollection
 
-NOTICE = "SIMULASI TRAFIK"
+NOTICE = "Demo - bukan data trafik sebenar"
 
 
 def score(index, hour):
@@ -58,7 +58,7 @@ def make_data(roads):
     return [{"Status": NOTICE, "Jam": f"{h:02d}:00" if h < 24 else "00:00 (+1 hari)",
              "ID": road["properties"]["id"], "Segmen": road["properties"]["name"],
              "Kelas OSM": road['properties'].get('highway',''),
-             "Skor simulasi 0-100": road_score(road, h), "Tahap simulasi": level(road_score(road, h))[0]}
+             "Skor 0-100": road_score(road, h), "Tahap": level(road_score(road, h))[0]}
             for h in range(6, 25) for i, road in enumerate(roads)]
 
 
@@ -74,7 +74,7 @@ def demo_html(boundary, roads):
         style_function=lambda f: {"color": "#06b6d4", "weight": 3, "fillOpacity": .025}).add_to(m)
     m.fit_bounds(layer.get_bounds(), padding=(25, 25))
     folium.LayerControl(collapsed=False).add_to(m)
-    m.get_root().html.add_child(Element('''<div style="position:fixed;top:12px;left:55px;z-index:9999;background:#f0fdfa;color:#115e59;border:1px solid #5eead4;border-radius:9px;padding:10px 14px;font:bold 14px Arial;pointer-events:none">SIMULASI TRAFIK<br><span style="font-size:11px;font-weight:normal">Bukan trafik sebenar atau ramalan Google</span></div>'''))
+    m.get_root().html.add_child(Element('''<div style="position:fixed;top:12px;left:55px;z-index:9999;background:#f0fdfa;color:#115e59;border:1px solid #5eead4;border-radius:9px;padding:10px 14px;font:bold 14px Arial;pointer-events:none">Trafik Paya Rumput<br><span style="font-size:11px;font-weight:normal">Demo · bukan data trafik sebenar</span></div>'''))
     records = []
     for i, road in enumerate(roads):
         values = [road_score(road, 6 + n / 2) for n in range(37)]
@@ -95,7 +95,7 @@ def demo_html(boundary, roads):
       const Control = L.Control.extend({onAdd:function(){
         const div=L.DomUtil.create('div');
         div.style.cssText='width:290px;background:white;color:#0f172a;padding:16px;border-radius:12px;box-shadow:0 3px 18px #0003;font:14px Arial';
-        div.innerHTML='<b style="color:#0f766e">SIMULASI TRAFIK</b><div class="time" style="font-size:27px;font-weight:bold;margin:8px 0"></div><input aria-label="Masa simulasi" type="range" min="6" max="24" step="0.5" value="12" style="width:100%;accent-color:#0d9488"><div style="display:flex;justify-content:space-between;font-size:11px"><span>6 AM</span><span>12 AM (hari berikut)</span></div><div style="display:flex;gap:8px;margin:14px 0"><button class="noon">12 PM</button><button class="night">8 PM</button></div><div class="stats" style="padding:9px;background:#f1f5f9;border-radius:8px"></div><div style="font-size:12px;line-height:1.8;margin-top:10px"><span style="color:#16a34a">━━</span> Rendah (0–29)<br><span style="color:#eab308">━━</span> Sederhana (30–49)<br><span style="color:#f97316">━━</span> Tinggi (50–69)<br><span style="color:#dc2626">━━</span> Sangat tinggi (70–100)</div><small>Skor simulasi, bukan kelajuan atau jumlah kenderaan.</small>';
+        div.innerHTML='<b style="color:#0f766e">Waktu trafik</b><div class="time" style="font-size:27px;font-weight:bold;margin:8px 0"></div><input aria-label="Masa" type="range" min="6" max="24" step="0.5" value="12" style="width:100%;accent-color:#0d9488"><div style="display:flex;justify-content:space-between;font-size:11px"><span>6 AM</span><span>12 AM (hari berikut)</span></div><div style="display:flex;gap:8px;margin:14px 0"><button class="noon">12 PM</button><button class="night">8 PM</button></div><div class="stats" style="padding:9px;background:#f1f5f9;border-radius:8px"></div><div style="font-size:12px;line-height:1.8;margin-top:10px"><span style="color:#16a34a">━━</span> Rendah (0–29)<br><span style="color:#eab308">━━</span> Sederhana (30–49)<br><span style="color:#f97316">━━</span> Tinggi (50–69)<br><span style="color:#dc2626">━━</span> Sangat tinggi (70–100)</div>';
         div.querySelectorAll('button').forEach(b=>b.style.cssText='background:#0f766e;color:white;border:0;border-radius:7px;padding:9px 18px;font-weight:bold;cursor:pointer');
         L.DomEvent.disableClickPropagation(div);L.DomEvent.disableScrollPropagation(div);
         const slider=div.querySelector('input');
@@ -108,13 +108,13 @@ def demo_html(boundary, roads):
             const v=r.values[idx];sum+=v;if(v>=70)high++;
             layers[i].line.setStyle({color:color(v)});
             layers[i].line.eachLayer(l=>{
-              const popup='<b>SIMULASI TRAFIK</b><br><b>'+r.id+' · '+r.name+'</b><br>'+time+' · '+label(v)+'<br>Skor simulasi: '+v+'/100<br>Bukan trafik sebenar atau ramalan Google.';
+              const popup='<b>'+r.id+' · '+r.name+'</b><br>'+time+' · '+label(v)+'<br>Skor: '+v+'/100';
               if(l.getPopup())l.setPopupContent(popup);else l.bindPopup(popup);
-              const tip=r.id+' · '+label(v)+' · '+v+'/100 (simulasi)';
+              const tip=r.id+' · '+label(v)+' · '+v+'/100';
               if(l.getTooltip())l.setTooltipContent(tip);else l.bindTooltip(tip);
             });
           });
-          div.querySelector('.stats').textContent='Purata simulasi '+Math.round(sum/roads.length)+'/100 · '+high+' segmen merah / '+roads.length;
+          div.querySelector('.stats').textContent='Purata skor '+Math.round(sum/roads.length)+'/100 · '+high+' segmen merah / '+roads.length;
         }
         let pending=0;
         slider.addEventListener('input',()=>{if(pending)cancelAnimationFrame(pending);pending=requestAnimationFrame(()=>{pending=0;update();});});
@@ -134,7 +134,7 @@ def curve_figure(roads):
     hours = list(range(6,25))
     means = [sum(road_score(r,h) for r in roads)/len(roads) for h in hours]
     ax.bar(hours, means, color=[level(v)[1] for v in means], width=.65)
-    ax.set(ylim=(0,100), ylabel="Skor simulasi (0-100)", title="SIMULASI TRAFIK - purata segmen jalan OSM")
+    ax.set(ylim=(0,100), ylabel="Skor (0-100)", title="Pola trafik harian · Demo")
     ax.set_xticks(hours, [str(h) if h<24 else "00*" for h in hours])
     ax.set_xlabel("Jam MYT (andaian) | *00 = tengah malam hari berikutnya")
     ax.spines[["top","right"]].set_visible(False)
@@ -157,7 +157,7 @@ def comparison_figure(boundary, roads):
         ax.add_collection(LineCollection(segments,colors=colours,linewidths=widths))
         ax.autoscale_view()
         ax.set_aspect('equal')
-        ax.set_title(f"{h:02d}:00 MYT - SIMULASI",fontweight='bold',color='#0f766e')
+        ax.set_title(f"{h:02d}:00 MYT",fontweight='bold',color='#0f766e')
         ax.set_xlabel('Longitude');ax.set_ylabel('Latitude')
         ax.ticklabel_format(useOffset=False)
         ax.grid(alpha=.15)
@@ -175,12 +175,12 @@ def make_demo_pdf(boundary, roads):
     pdfmetrics.registerFont(TTFont('DemoSans',findfont('DejaVu Sans')))
     pdfmetrics.registerFont(TTFont('DemoSans-Bold',findfont('DejaVu Sans:weight=bold')))
     out=io.BytesIO();c=canvas.Canvas(out,pagesize=landscape(A4));w,h=landscape(A4)
-    c.setTitle('SIMULASI TRAFIK - Paya Rumput')
+    c.setTitle('Trafik Paya Rumput')
     def header(title):
         c.setFillColor(HexColor('#0f766e'));c.setFont('DemoSans-Bold',18)
-        c.drawString(35,h-38,'SIMULASI TRAFIK')
+        c.drawString(35,h-38,'TRAFIK PAYA RUMPUT')
         c.setFillColor(HexColor('#0f172a'));c.setFont('DemoSans',12);c.drawString(35,h-60,title)
-        c.setFont('DemoSans',9);c.drawString(35,23,'Bukan trafik sebenar, ramalan Google, kelajuan atau bilangan kenderaan. Untuk demonstrasi sahaja.')
+        c.setFont('DemoSans',9);c.drawString(35,23,'Demo - bukan data trafik sebenar.')
     def figure(fig,x,y,width,height):
         img=io.BytesIO();fig.savefig(img,format='png',dpi=160);img.seek(0)
         c.drawImage(ImageReader(img),x,y,width=width,height=height,mask='auto')
@@ -189,9 +189,9 @@ def make_demo_pdf(boundary, roads):
     for i,(label,color) in enumerate([('Rendah 0-29','#16a34a'),('Sederhana 30-49','#eab308'),('Tinggi 50-69','#f97316'),('Sangat tinggi 70-100','#dc2626')]):
         x=45+i*190;c.setFillColor(HexColor(color));c.rect(x,52,16,6,fill=1,stroke=0)
         c.setFillColor(HexColor('#334155'));c.setFont('DemoSans',9);c.drawString(x+23,51,label)
-    c.showPage();header('Pola harian simulasi | 06:00 hingga 00:00 hari berikutnya')
+    c.showPage();header('Pola trafik harian | 06:00 hingga 00:00 hari berikutnya')
     figure(curve_figure(roads),35,h-285,w-70,200)
-    c.setFont('DemoSans-Bold',10);c.drawString(40,h-309,'Liputan kelas jalan OSM (semua skor trafik ialah simulasi)')
+    c.setFont('DemoSans-Bold',10);c.drawString(40,h-309,'Liputan kelas jalan OSM')
     c.setFont('DemoSans',8)
     counts=sorted(Counter(r['properties'].get('highway','unknown') for r in roads).items())
     for i,(kind,count) in enumerate(counts):
@@ -205,8 +205,7 @@ def make_demo_pdf(boundary, roads):
 
 def render_simulation(st,boundary):
     from streamlit.components.v1 import html
-    st.subheader('Simulasi hotspot trafik · Paya Rumput')
-    st.caption('Mod simulasi · Bukan data trafik sebenar.')
+    st.subheader('Trafik Paya Rumput')
     try:
         roads=load_roads()
     except (OSError,ValueError) as exc:
@@ -216,10 +215,10 @@ def render_simulation(st,boundary):
     html(page,height=760)
     st.caption(f'{len(roads):,} segmen jalan OSM dalam sempadan DUN. Gerakkan masa 6 AM–12 AM atau guna 12 PM / 8 PM. Warna berubah tanpa memuat semula peta.')
     st.pyplot(curve_figure(roads),use_container_width=True)
-    with st.expander('Cara simulasi dibina'):
+    with st.expander('Tentang paparan'):
         st.write('Skor 0–100 menggunakan andaian waktu puncak dan kelas jalan. Ini bukan trafik sebenar. Semua jalan kenderaan terpilih dalam ekstrak OpenStreetMap dipotong kepada sempadan DUN, termasuk jalan utama, perumahan, servis dan trek. Laluan pejalan kaki, basikal, jalan dalam pembinaan dan jalan bertanda larangan kenderaan tidak disertakan. Jalan yang belum dipetakan mungkin tiada; akses fizikal setiap jalan tidak disahkan.')
         st.markdown('[Geometri jalan © OpenStreetMap contributors · ODbL](https://www.openstreetmap.org/copyright)')
     c1,c2,c3=st.columns(3)
-    c1.download_button('PDF simulasi · 12 PM & 8 PM',st.cache_data(show_spinner=False)(make_demo_pdf)(boundary,roads),'SIMULASI_paya_rumput.pdf','application/pdf')
-    c2.download_button('CSV simulasi · semua jam',pd.DataFrame(make_data(roads)).to_csv(index=False).encode('utf-8-sig'),'SIMULASI_trafik.csv','text/csv')
-    c3.download_button('Peta simulasi HTML',page.encode('utf-8'),'SIMULASI_peta.html','text/html')
+    c1.download_button('PDF · 12 PM & 8 PM',st.cache_data(show_spinner=False)(make_demo_pdf)(boundary,roads),'Trafik_Paya_Rumput.pdf','application/pdf')
+    c2.download_button('CSV · semua jam',pd.DataFrame(make_data(roads)).to_csv(index=False).encode('utf-8-sig'),'Trafik_Paya_Rumput.csv','text/csv')
+    c3.download_button('Peta HTML',page.encode('utf-8'),'Peta_Trafik_Paya_Rumput.html','text/html')

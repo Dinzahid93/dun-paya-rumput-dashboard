@@ -286,16 +286,16 @@ def main():
     border-radius:12px;padding:14px}
     </style>""",unsafe_allow_html=True)
     st.title("📍 Paya Rumput")
-    st.caption("N13 · Melaka · Simulasi trafik & maklumat kawasan · Versi 3.9")
+    st.caption("N13 · Melaka · Trafik & maklumat kawasan · Versi 3.10")
     try:
         boundary = st.cache_data(ttl=86400)(load_boundary)()
     except Exception as exc:
         st.error(f"Sempadan gagal dimuatkan: {exc}")
-        st.info("Muat naik boundary.geojson daripada pakej ke folder yang sama dengan app.py. Tiada sempadan atau pin simulasi digunakan.")
+        st.info("Muat naik boundary.geojson daripada pakej ke folder yang sama dengan app.py.")
         st.stop()
     audit = audit_locations(boundary)
 
-    traffic_tab, map_tab, graph_tab, audit_tab = st.tabs(["Simulasi trafik", "Peta", "Info DUN", "Audit & muat turun"])
+    traffic_tab, map_tab, graph_tab, audit_tab = st.tabs(["Trafik", "Peta", "Info DUN", "Audit & muat turun"])
 
     with map_tab:
         st.columns([1,3])[0].metric("PDM",len(PDMS))
